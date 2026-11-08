@@ -1,4 +1,5 @@
 import random
+import time
 import streamlit as st
 from groq import Groq
 from supabase import create_client
@@ -19,23 +20,23 @@ if not groq_key or not supabase_url or not supabase_key:
 groq_client = Groq(api_key=groq_key)
 supabase = create_client(supabase_url, supabase_key)
 
-# 3. AI Generation
+# 3. AI Generation με καθυστέρηση & χωρίς απόκρυψη σφαλμάτων
 
 
 def generate_ai_reply(prompt, system_instruction):
-    try:
-        completion = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=150
-        )
-        return completion.choices[0].message.content
-    except Exception:
-        return "Είμαι ο αληθινός, απλά κόλλησε στιγμιαία το δίκτυο."
+    # Τεχνητή καθυστέρηση για φυσική απόκριση (1.5 έως 3.5 δευτερόλεπτα)
+    time.sleep(random.uniform(1.5, 3.5))
+
+    completion = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.7,
+        max_tokens=150
+    )
+    return completion.choices[0].message.content
 
 
 # 4. Lobby & Επιλογή Ρόλου
@@ -58,92 +59,133 @@ if role == "Δημιουργός Προφίλ":
             "room_code": room_code,
             "twin_name": twin_name,
             "twin_style": twin_style,
-            "status": "waiting"
+            "status": "waiting",
+            "current_prompt": "",
+            "current_reply": "",
+            "real_source": ""
         }).execute()
         st.success(
             f"Το δωμάτιο {room_code} δημιουργήθηκε με το προφίλ: {twin_name}")
 
 st.divider()
 
-# 5. Ανακριτήριο
-st.subheader(f"2. Ανακριτήριο (Δωμάτιο: {room_code})")
+# 5. Live Ανακριτήριο (Ανανέωση κάθε 2 δευτερόλεπτα)
 
-room_data = supabase.table("rooms").select(
-    "*").eq("room_code", room_code).execute()
 
-if not room_data.data:
-    st.info("Το δωμάτιο δεν έχει δημιουργηθεί ακόμα. Πρέπει ο Δημιουργός να πατήσει 'Δημιουργία Δωματίου'.")
-    st.stop()
+@st.fragment(run_every=2)
+def render_game():
+    st.subheader(f"2. Ανακριτήριο (Δωμάτιο: {room_code})")
 
-room = room_data.data[0]
+    room_data = supabase.table("rooms").select(
+        "*").eq("room_code", room_code).execute()
 
-# --- ΟΨΗ ΑΝΑΚΡΙΤΗ (Αυτός που μαντεύει) ---
-if role == "Ανακριτής":
-    st.caption(f"Εξετάζεις το προφίλ: {room.get('twin_name', 'Άγνωστος')}")
+    if not room_data.data:
+        st.info(
+            "Το δωμάτιο δεν έχει δημιουργηθεί ακόμα. Ο Δημιουργός πρέπει να πατήσει 'Δημιουργία Δωματίου'.")
+        return
 
-    if prompt := st.chat_input("Γράψε την ερώτησή σου..."):
-        responder = random.choice(["AI", "Human"])
+    room = room_data.data[0]
 
-        system_instruction = f"""
-        Είσαι το Digital Twin του {room.get('twin_name')}.
-        Στυλ και Χαρακτηριστικά: {room.get('twin_style')}.
-        
-        ΚΑΝΟΝΕΣ:
-        1. Απάντα αυστηρά σε 1-2 προτάσεις στα ελληνικά.
-        2. Μην αποκαλύψεις ΠΟΤΕ ότι είσαι AI.
-        3. Αν σε ρωτήσουν αν είσαι άνθρωπος, επέμεινε ότι είσαι ο αληθινός {room.get('twin_name')}.
-        """
+    # --- ΟΨΗ ΑΝΑΚΡΙΤΗ ---
+    if role == "Ανακριτής":
+        st.caption(f"Εξετάζεις το προφίλ: {room.get('twin_name', 'Άγνωστος')}")
 
-        if responder == "AI":
-            reply = generate_ai_reply(prompt, system_instruction)
-            status = "answered"
-        else:
-            reply = ""
-            status = "waiting_human"
+        # Αποστολή νέας ερώτησης
+        if room.get("status") in ["waiting", "finished", None]:
+            if prompt := st.chat_input("Γράψε την ερώτησή σου..."):
+                responder = random.choice(["AI", "Human"])
 
-        supabase.table("rooms").update({
-            "current_prompt": prompt,
-            "current_reply": reply,
-            "real_source": responder,
-            "status": status
-        }).eq("room_code", room_code).execute()
-        st.rerun()
+                system_instruction = f"""
+                Είσαι το Digital Twin του {room.get('twin_name')}.
+                Στυλ και Χαρακτηριστικά: {room.get('twin_style')}.
+                
+                ΚΑΝΟΝΕΣ:
+                1. Απάντα αυστηρά σε 1-2 προτάσεις στα ελληνικά.
+                2. Μην αποκαλύψεις ΠΟΤΕ ότι είσαι AI.
+                3. Αν σε ρωτήσουν αν είσαι άνθρωπος, επέμεινε ότι είσαι ο αληθινός {room.get('twin_name')}.
+                """
 
-    if room.get("current_prompt"):
-        st.write(f"**Ερώτηση:** {room['current_prompt']}")
+                if responder == "AI":
+                    reply = generate_ai_reply(prompt, system_instruction)
+                    status = "answered"
+                else:
+                    reply = ""
+                    status = "waiting_human"
 
+                supabase.table("rooms").update({
+                    "current_prompt": prompt,
+                    "current_reply": reply,
+                    "real_source": responder,
+                    "status": status
+                }).eq("room_code", room_code).execute()
+                st.rerun()
+
+        # Εμφάνιση εξέλιξης ερώτησης
+        if room.get("current_prompt"):
+            st.write(f"**Ερώτηση:** {room['current_prompt']}")
+
+            if room.get("status") == "waiting_human":
+                st.info("Ο αληθινός χρήστης πληκτρολογεί την απάντησή του...")
+
+            elif room.get("status") == "answered":
+                st.write(f"**Απάντηση:** {room['current_reply']}")
+                st.write("**Ποιος απάντησε;**")
+
+                col_b1, col_b2 = st.columns(2)
+                if col_b1.button("AI / Twin", key="btn_ai"):
+                    correct = (room.get("real_source") == "AI")
+                    supabase.table("rooms").update({"status": "finished"}).eq(
+                        "room_code", room_code).execute()
+                    st.session_state["last_result"] = (
+                        "success" if correct else "error", "Σωστά! Ήταν το AI." if correct else "Λάθος! Ήταν ο αληθινός χρήστης.")
+                    st.rerun()
+
+                if col_b2.button("Αληθινός Χρήστης", key="btn_human"):
+                    correct = (room.get("real_source") == "Human")
+                    supabase.table("rooms").update({"status": "finished"}).eq(
+                        "room_code", room_code).execute()
+                    st.session_state["last_result"] = (
+                        "success" if correct else "error", "Σωστά! Ήταν ο αληθινός χρήστης." if correct else "Λάθος! Ήταν το AI.")
+                    st.rerun()
+
+            elif room.get("status") == "finished":
+                st.write(f"**Απάντηση:** {room['current_reply']}")
+                if "last_result" in st.session_state:
+                    res_type, res_msg = st.session_state["last_result"]
+                    if res_type == "success":
+                        st.success(res_msg)
+                    else:
+                        st.error(res_msg)
+
+                if st.button("Νέος Γύρος"):
+                    supabase.table("rooms").update({
+                        "status": "waiting",
+                        "current_prompt": "",
+                        "current_reply": "",
+                        "real_source": ""
+                    }).eq("room_code", room_code).execute()
+                    st.session_state.pop("last_result", None)
+                    st.rerun()
+
+    # --- ΟΨΗ ΔΗΜΙΟΥΡΓΟΥ ΠΡΟΦΙΛ ---
+    else:
         if room.get("status") == "waiting_human":
-            st.warning("Ο αληθινός χρήστης πληκτρολογεί την απάντησή του...")
-            if st.button("Ανανέωση"):
+            st.warning(f"Ο Ανακριτής ρώτησε: {room.get('current_prompt')}")
+            human_answer = st.text_input("Γράψε την απάντησή σου:")
+            if st.button("Αποστολή Απάντησης"):
+                supabase.table("rooms").update({
+                    "current_reply": human_answer,
+                    "status": "answered"
+                }).eq("room_code", room_code).execute()
                 st.rerun()
         elif room.get("status") == "answered":
-            st.write(f"**Απάντηση:** {room['current_reply']}")
-            st.write("**Ποιος απάντησε;**")
-            col_b1, col_b2 = st.columns(2)
-            if col_b1.button("AI / Twin"):
-                if room.get("real_source") == "AI":
-                    st.success("Σωστά! Ήταν το AI.")
-                else:
-                    st.error("Λάθος! Ήταν ο αληθινός χρήστης.")
-            if col_b2.button("Αληθινός Χρήστης"):
-                if room.get("real_source") == "Human":
-                    st.success("Σωστά! Ήταν ο αληθινός χρήστης.")
-                else:
-                    st.error("Λάθος! Ήταν το AI.")
+            st.info("Ο Ανακριτής διαβάζει την απάντηση και μαντεύει...")
+        elif room.get("status") == "finished":
+            st.success(
+                "Ο γύρος ολοκληρώθηκε! Αναμονή για νέο γύρο από τον Ανακριτή.")
+        else:
+            st.info("Αναμονή για νέα ερώτηση από τον Ανακριτή...")
 
-# --- ΟΨΗ ΔΗΜΙΟΥΡΓΟΥ ΠΡΟΦΙΛ (Αυτός που απαντάει όταν τύχει Human) ---
-else:
-    if room.get("status") == "waiting_human":
-        st.warning(f"Ο Ανακριτής ρώτησε: {room.get('current_prompt')}")
-        human_answer = st.text_input("Γράψε την απάντησή σου:")
-        if st.button("Αποστολή Απάντησης"):
-            supabase.table("rooms").update({
-                "current_reply": human_answer,
-                "status": "answered"
-            }).eq("room_code", room_code).execute()
-            st.success("Η απάντηση στάλθηκε στον Ανακριτή.")
-            st.rerun()
-    else:
-        st.info("Αναμονή για νέα ερώτηση από τον Ανακριτή...")
-        if st.button("Ανανέωση"):
-            st.rerun()
+
+# Εκτέλεση Live Render
+render_game()
