@@ -34,7 +34,7 @@ supabase = create_client(supabase_url, supabase_key)
 def generate_ai_reply(prompt, system_instruction):
     time.sleep(random.uniform(1.5, 3.0))
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama3-70b-8192",  # <--- ΝΕΟ, ΣΩΣΤΟ ΜΟΝΤΕΛΟ
         messages=[
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": prompt}
